@@ -6,7 +6,7 @@
 #include <glm/gtc/type_ptr.hpp>
 #include <glm/gtc/constants.hpp>
 #include <glm/gtx/transform.hpp>
-
+#include <time.h>
 using namespace glm;
 
 WGPUDevice device;
@@ -34,6 +34,10 @@ struct Cube {
  * Current rotation angle (in degrees, updated per frame).
  */
 float rotDeg = 0.0f;
+
+struct Time {
+	double currentTime, deltaTime = 0.0f;
+}timeStamp;
 
 struct MVP {
 	mat4 model;
@@ -74,9 +78,13 @@ static char const triangle_vert_wgsl[] = R"(
 			vec3<f32>( 0.0,  0.0,  1.0));
 		var output : VertexOut;
 
-		var pos = uMVP.projection * uMVP.view * vec4<f32>(input.aPos, 1.0); 	
-		output.Position = pos;
-		//output.Position = vec4<f32>(rot * vec3<f32>(input.aPos), 1.0);
+		// Rotate 1번째 방법 - Rotating된 Model을 Shader에 던져준다.
+		//var pos = uMVP.projection * uMVP.view * uMVP.model * vec4<f32>(input.aPos, 1.0); 	
+		//output.Position = pos;
+
+		// Rotate 2번째 방법 - Shader에서 Ratate된 Model Matrix를 계산한다.
+		var model = vec4<f32>(rot * vec3<f32>(input.aPos), 1.0);
+        output.Position = uMVP.projection * uMVP.view * model;
 		output.vCol = input.aCol;
 		return output;
 	}
@@ -146,10 +154,6 @@ static void setProjectionAndView()
 {
 	view_mtr.projection = perspective(glm::radians(25.0f), (float)WINDOW_WIDTH / (float)WINDOW_HEIGHT, 0.1f, 10.0f);
 	view_mtr.view = lookAt(vec3(5.0f, 5.0f, 5.f), vec3(0.f, 0.f, 0.f), vec3(0.f, 1.f, 0.f));
-}
-static void updateTransformationMatrix()
-{
-	// 큐브 돌리자
 }
 
 /**
@@ -413,9 +417,14 @@ static bool redraw() {
 	// mvp update
 	setProjectionAndView();
 
-
-	// update the rotation
-	rotDeg += 0.1f;
+	// Rotate 1번째 방법
+	double now = clock()/1000.f;
+	const float sin_now = sin(now);
+	const float cos_now = cos(now);
+	view_mtr.model = rotate(view_mtr.model, 0.1f, vec3(sin_now, cos_now, 0.0f));
+	
+	// Rotate 2번째 방법
+	rotDeg += 0.2f;
 	wgpuQueueWriteBuffer(queue, uRotBuf, 0, &rotDeg, sizeof(rotDeg));
 	wgpuQueueWriteBuffer(queue, uMVPBuf, 0, &view_mtr, sizeof(view_mtr));
 
