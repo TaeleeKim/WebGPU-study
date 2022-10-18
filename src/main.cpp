@@ -7,6 +7,8 @@
 #include <glm/gtc/constants.hpp>
 #include <glm/gtx/transform.hpp>
 #include <time.h>
+
+#define MAX_NUM_INSTANCES 16
 using namespace glm;
 
 WGPUDevice device;
@@ -19,6 +21,8 @@ WGPUBuffer vertBuf; // vertex buffer with triangle position and colours
 WGPUBuffer indxBuf; // index buffer
 WGPUBuffer uRotBuf; // uniform buffer (containing the rotation angle)
 WGPUBuffer uMVPBuf;
+
+WGPUBuffer unifBuf;
 
 WGPUBindGroup bindGroup;
 
@@ -34,6 +38,16 @@ struct Cube {
  * Current rotation angle (in degrees, updated per frame).
  */
 float rotDeg = 0.0f;
+
+static const uint32_t x_count = 4;
+static const uint32_t y_count = 4;
+static const uint32_t num_instances = x_count * y_count;
+static const uint32_t matrix_float_count = 16; // 4x4 matrix
+static const uint32_t matrix_size = 4 * matrix_float_count;
+static const uint32_t uniform_buffer_size = num_instances * matrix_size;
+
+mat4 modelMatrices[num_instances];
+float mvpMatricesData[matrix_float_count * num_instances];
 
 struct Time {
 	double currentTime, deltaTime = 0.0f;
@@ -88,6 +102,35 @@ static char const triangle_vert_wgsl[] = R"(
 		output.vCol = input.aCol;
 		return output;
 	}
+)";
+
+
+static char const instanced_vertex_shader_wgsl[] =R"(
+struct VertexIn {
+	@location(0) aPos : vec4<f32>,
+	@location(1) aCol : vec3<f32>,
+};
+struct Uniforms {
+    modelViewProjectionMatrix : array<mat4x4<f32>, 16>,
+};
+struct VertexOutput {
+	@location(0) vCol : vec3<f32>,
+	@builtin(position) Position : vec4<f32>,
+};
+
+@group(0) @binding(0) var<uniform> uniforms : Uniforms;
+
+@stage(vertex)
+fn main(
+input : VertexIn,
+  @builtin(instance_index) instanceIdx : u32,
+) -> VertexOutput {
+	var output : VertexOutput;
+	output.Position = uniforms.modelViewProjectionMatrix[instanceIdx] * input.aPos;
+	output.vCol = input.aCol;
+	return output;
+}
+
 )";
 
 /**
@@ -153,7 +196,7 @@ static WGPUBuffer createBuffer(const void* data, size_t size, WGPUBufferUsage us
 static void setProjectionAndView()
 {
 	view_mtr.projection = perspective(glm::radians(25.0f), (float)WINDOW_WIDTH / (float)WINDOW_HEIGHT, 0.1f, 10.0f);
-	view_mtr.view = lookAt(vec3(5.0f, 5.0f, 5.f), vec3(0.f, 0.f, 0.f), vec3(0.f, 1.f, 0.f));
+	view_mtr.view = lookAt(vec3(50.0f, 50.0f, 50.f), vec3(0.f, 0.f, 0.f), vec3(0.f, 1.f, 0.f));
 }
 
 /**
@@ -162,28 +205,38 @@ static void setProjectionAndView()
 static void createPipelineAndBuffers() {
 	// compile shaders
 	// NOTE: these are now the WGSL shaders (tested with Dawn and Chrome Canary)
-	WGPUShaderModule vertMod = createShader(triangle_vert_wgsl);
+	WGPUShaderModule vertMod = createShader(instanced_vertex_shader_wgsl);
 	WGPUShaderModule fragMod = createShader(triangle_frag_wgsl);
 
-	WGPUBufferBindingLayout buf[2] = {};
+	WGPUBufferBindingLayout buf[1] = {};
 	buf[0].type = WGPUBufferBindingType_Uniform;
 
-	buf[1].type = WGPUBufferBindingType_Uniform;
+	//buf[1].type = WGPUBufferBindingType_Uniform;
 
 	// bind group layout (used by both the pipeline layout and uniform bind group, released at the end of this function)
-	WGPUBindGroupLayoutEntry bglEntry[2] = {};
-	bglEntry[0].binding = 0;
-	bglEntry[0].visibility = WGPUShaderStage_Vertex;
-	bglEntry[0].buffer = buf[0];
+	//WGPUBindGroupLayoutEntry bglEntry[2] = {};
+	//bglEntry[0].binding = 0;
+	//bglEntry[0].visibility = WGPUShaderStage_Vertex;
+	//bglEntry[0].buffer = buf[0];
 
-	bglEntry[1].binding = 1;
-	bglEntry[1].visibility = WGPUShaderStage_Vertex;
-	bglEntry[1].buffer = buf[1];
+	//bglEntry[1].binding = 1;
+	//bglEntry[1].visibility = WGPUShaderStage_Vertex;
+	//bglEntry[1].buffer = buf[1];
 
-	WGPUBindGroupLayoutDescriptor bglDesc = {};
-	bglDesc.entryCount = 2;
-	bglDesc.entries = bglEntry;
-	WGPUBindGroupLayout bindGroupLayout = wgpuDeviceCreateBindGroupLayout(device, &bglDesc);
+	//WGPUBindGroupLayoutDescriptor bglDesc = {};
+	//bglDesc.entryCount = 2;
+	//bglDesc.entries = bglEntry;
+	//WGPUBindGroupLayout bindGroupLayout = wgpuDeviceCreateBindGroupLayout(device, &bglDesc);
+
+	WGPUBindGroupLayoutEntry bglEntry_inst[1] = {};
+	bglEntry_inst[0].binding = 0;
+	bglEntry_inst[0].visibility = WGPUShaderStage_Vertex;
+	bglEntry_inst[0].buffer = buf[0];
+
+	WGPUBindGroupLayoutDescriptor bglDesc_inst = {};
+	bglDesc_inst.entryCount = 1;
+	bglDesc_inst.entries = bglEntry_inst;
+	WGPUBindGroupLayout bindGroupLayout = wgpuDeviceCreateBindGroupLayout(device, &bglDesc_inst);
 
 	// pipeline layout (used by the render pipeline, released after its creation)
 	WGPUPipelineLayoutDescriptor layoutDesc = {};
@@ -193,14 +246,14 @@ static void createPipelineAndBuffers() {
 
 	// describe buffer layouts
 	WGPUVertexAttribute vertAttrs[2] = {};
-	vertAttrs[0].format = WGPUVertexFormat_Float32x3;
+	vertAttrs[0].format = WGPUVertexFormat_Float32x4;
 	vertAttrs[0].offset = 0;
 	vertAttrs[0].shaderLocation = 0;
 	vertAttrs[1].format = WGPUVertexFormat_Float32x3;
-	vertAttrs[1].offset = 3 * sizeof(float);
+	vertAttrs[1].offset = 4 * sizeof(float);
 	vertAttrs[1].shaderLocation = 1;
 	WGPUVertexBufferLayout vertexBufferLayout = {};
-	vertexBufferLayout.arrayStride = 6 * sizeof(float);
+	vertexBufferLayout.arrayStride = 7 * sizeof(float);
 	vertexBufferLayout.attributeCount = 2;
 	vertexBufferLayout.attributes = vertAttrs;
 
@@ -273,19 +326,32 @@ static void createPipelineAndBuffers() {
 	wgpuShaderModuleRelease(fragMod);
 	wgpuShaderModuleRelease(vertMod);
 
-	// create the buffers (x, y, z,  r, g, b)
-	float const vertData[] = {
+	const float scaleFactor = 0.5f;
+
+	// create the buffers (x, y, z, w,  r, g, b)
+	float vertData[] = {
 		// Front
-		-0.8f, -0.8f, 0.8f, 1.0f, 1.0f, 0.0f, // BL
-		 0.8f, -0.8f, 0.8f, 0.7f, 0.7f, 0.0f, // BR
-		-0.8f,  0.8f, 0.8f, 0.7f, 0.7f, 0.0f, // TL
-		 0.8f,  0.8f, 0.8f, 0.5f, 0.5f, 0.0f, // TR
+		-0.8f, -0.8f, 0.8f, 0.0f, 1.0f, 1.0f, 0.0f, // BL
+		 0.8f, -0.8f, 0.8f, 0.0f, 0.7f, 0.7f, 0.0f, // BR
+		-0.8f,  0.8f, 0.8f, 0.0f, 0.7f, 0.7f, 0.0f, // TL
+		 0.8f,  0.8f, 0.8f, 0.0f, 0.5f, 0.5f, 0.0f, // TR
 		 // Rear
-		-0.8f, -0.8f, -0.8f, 0.0f, 0.0f, 1.0f, // BL
-		 0.8f, -0.8f, -0.8f, 0.0f, 0.0f, 0.7f, // BR
-		-0.8f,  0.8f, -0.8f, 0.0f, 0.0f, 0.7f, // TL
-		 0.8f,  0.8f, -0.8f, 0.0f, 0.0f, 0.5f, // TR
+		-0.8f, -0.8f, -0.8f, 0.0f, 0.0f, 0.0f, 1.0f, // BL
+		 0.8f, -0.8f, -0.8f, 0.0f, 0.0f, 0.0f, 0.7f, // BR
+		-0.8f,  0.8f, -0.8f, 0.0f, 0.0f, 0.0f, 0.7f, // TL
+		 0.8f,  0.8f, -0.8f, 0.0f, 0.0f, 0.0f, 0.5f, // TR
 	};
+
+
+	for (int i = 0; i < 8; i++)
+	{
+		for (int j = 0; j < 4; j++)
+		{
+			vertData[i*7 + j] *= scaleFactor;
+		}
+	}
+
+
 	uint16_t const indxData[] = {
 		0, 1, 2,
 		2, 1, 3,
@@ -306,6 +372,41 @@ static void createPipelineAndBuffers() {
 		4, 1, 5
 	};
 
+	const float step = 4.0;
+	view_mtr.model = mat4(1.0f);
+
+	// Initialize the matrix data for every instance.
+	int m = 0;
+	for (int x = 0; x < x_count; x++) {
+		for (int y = 0; y < y_count; y++) {
+
+			modelMatrices[m] = translate(view_mtr.model, vec3(step * (x - x_count / 2.0f + 0.5f), step * (y - y_count / 2.0f + 0.5), 0.0f));
+			m++;
+		}
+	}
+	
+	mat4 tempMat4;
+	m = 0;
+	int iii = 0;
+	double now = clock() / 1000.0f;
+	for (int x = 0; x < x_count; x++) {
+		for (int y = 0; y < y_count; y++) {
+
+			tempMat4 = rotate(modelMatrices[iii], 1.0f, vec3(sin((x + 0.5f)*now), cos((y + 0.5f)*now), 0.0f));
+
+			tempMat4 *= view_mtr.view;
+			tempMat4 *= view_mtr.projection;
+
+			const float *pSource = (const float*)value_ptr(tempMat4);
+			for (int j = 0; j < 16; ++j)
+				mvpMatricesData[m + j] = pSource[j];
+
+			iii++;
+			m += matrix_float_count;
+		}
+	}
+
+
 	cube.indexCount = sizeof(indxData)/sizeof(uint16_t);
 	cube.instanceCount = cube.indexCount / 3;
 
@@ -315,28 +416,41 @@ static void createPipelineAndBuffers() {
 	// create the uniform bind group (note 'rotDeg' is copied here, not bound in any way)
 	uRotBuf = createBuffer(&rotDeg, sizeof(rotDeg), WGPUBufferUsage_Uniform);
 
-	view_mtr.model = mat4(1.0f);
+	unifBuf = createBuffer(&mvpMatricesData, uniform_buffer_size, WGPUBufferUsage_Uniform);
+
 	setProjectionAndView();
 
 	uMVPBuf = createBuffer(&view_mtr, sizeof(view_mtr)+256, WGPUBufferUsage_Uniform);
 
-	WGPUBindGroupEntry bgEntry[2] = {};
-	bgEntry[0].binding = 0;
-	bgEntry[0].buffer = uRotBuf;
-	bgEntry[0].offset = 0;
-	bgEntry[0].size = sizeof(rotDeg);
+	//WGPUBindGroupEntry bgEntry[2] = {};
+	//bgEntry[0].binding = 0;
+	//bgEntry[0].buffer = uRotBuf;
+	//bgEntry[0].offset = 0;
+	//bgEntry[0].size = sizeof(rotDeg);
 
-	bgEntry[1].binding = 1;
-	bgEntry[1].buffer = uMVPBuf;
-	bgEntry[1].offset = 0;
-	bgEntry[1].size = sizeof(view_mtr);
+	//bgEntry[1].binding = 1;
+	//bgEntry[1].buffer = uMVPBuf;
+	//bgEntry[1].offset = 0;
+	//bgEntry[1].size = sizeof(view_mtr);
 
-	WGPUBindGroupDescriptor bgDesc = {};
-	bgDesc.layout = bindGroupLayout;
-	bgDesc.entryCount = 2;
-	bgDesc.entries = bgEntry;
+	//WGPUBindGroupDescriptor bgDesc = {};
+	//bgDesc.layout = bindGroupLayout;
+	//bgDesc.entryCount = 2;
+	//bgDesc.entries = bgEntry;
 
-	bindGroup = wgpuDeviceCreateBindGroup(device, &bgDesc);
+	//
+	WGPUBindGroupEntry bgEntry_inst[1] = {};
+	bgEntry_inst[0].binding = 0;
+	bgEntry_inst[0].buffer = unifBuf;
+	bgEntry_inst[0].offset = 0;
+	bgEntry_inst[0].size = matrix_float_count * num_instances * sizeof(float);
+
+	WGPUBindGroupDescriptor bgDesc_inst = {};
+	bgDesc_inst.layout = bindGroupLayout;
+	bgDesc_inst.entryCount = 1;
+	bgDesc_inst.entries = bgEntry_inst;
+
+	bindGroup = wgpuDeviceCreateBindGroup(device, &bgDesc_inst);
 
 	// last bit of clean-up
 	wgpuBindGroupLayoutRelease(bindGroupLayout);
@@ -418,15 +532,16 @@ static bool redraw() {
 	setProjectionAndView();
 
 	// Rotate 1锅掳 规过
-	double now = clock()/1000.f;
-	const float sin_now = sin(now);
-	const float cos_now = cos(now);
-	view_mtr.model = rotate(view_mtr.model, 0.1f, vec3(sin_now, cos_now, 0.0f));
+	//double now = clock()/1000.f;
+	//const float sin_now = sin(now);
+	//const float cos_now = cos(now);
+	//view_mtr.model = rotate(view_mtr.model, 0.1f, vec3(sin_now, cos_now, 0.0f));
 	
 	// Rotate 2锅掳 规过
-	rotDeg += 0.2f;
-	wgpuQueueWriteBuffer(queue, uRotBuf, 0, &rotDeg, sizeof(rotDeg));
+	//rotDeg += 0.2f;
+	//wgpuQueueWriteBuffer(queue, uRotBuf, 0, &rotDeg, sizeof(rotDeg));
 	wgpuQueueWriteBuffer(queue, uMVPBuf, 0, &view_mtr, sizeof(view_mtr));
+	wgpuQueueWriteBuffer(queue, unifBuf, 0, &mvpMatricesData, matrix_float_count * num_instances * sizeof(float));
 
 	// draw the triangle (comment these five lines to simply clear the screen)
 	wgpuRenderPassEncoderSetPipeline(pass, pipeline);
@@ -466,7 +581,8 @@ extern "C" int __main__(int /*argc*/, char* /*argv*/[]) {
 
 		#ifndef __EMSCRIPTEN__
 			wgpuBindGroupRelease(bindGroup);
-			wgpuBufferRelease(uRotBuf);
+			//wgpuBufferRelease(uRotBuf);
+			wgpuBufferRelease(unifBuf);
 			wgpuBufferRelease(indxBuf);
 			wgpuBufferRelease(vertBuf);
 			wgpuRenderPipelineRelease(pipeline);
