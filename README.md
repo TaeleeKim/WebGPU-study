@@ -11,7 +11,7 @@ But thanks to the starter project, you can use dawn with no effort.
 ## Steps
 - [x] Make a Cube
 - [x] Make the Cube rotate
-- [ ] Make Cubes using Instancing technique
+- [x] Make Cubes using Instancing technique
 - [ ] Make rotating Cubes at different speed
 
 
