@@ -1,104 +1,87 @@
 #include "webgpu.h"
-
+#include <math.h>
 #include <string.h>
+#include <stdlib.h>
+#include <glm/glm.hpp>
+#include <glm/gtc/type_ptr.hpp>
+#include <glm/gtc/constants.hpp>
+#include <glm/gtx/transform.hpp>
+#include <time.h>
+using namespace glm;
 
 WGPUDevice device;
 WGPUQueue queue;
 WGPUSwapChain swapchain;
 
 WGPURenderPipeline pipeline;
+
 WGPUBuffer vertBuf; // vertex buffer with triangle position and colours
 WGPUBuffer indxBuf; // index buffer
 WGPUBuffer uRotBuf; // uniform buffer (containing the rotation angle)
+WGPUBuffer uMVPBuf;
+
 WGPUBindGroup bindGroup;
+
+uint16_t WINDOW_WIDTH = 1200;
+uint16_t WINDOW_HEIGHT = 800;
+
+#define MAX_NUM_INSTANCES 1000
+
+static const uint32_t x_count = 10;
+static const uint32_t y_count = 10;
+static const uint32_t z_count = 10;
+static const uint32_t num_instances = x_count * y_count * z_count;
+static const uint32_t matrix_float_count = 16; // 4x4 matrix
+static const uint32_t matrix_size = 4 * matrix_float_count;
+
+struct Cube {
+	uint16_t triangleCount = 0;
+	uint16_t indexCount = 0;
+} cube;
 
 /**
  * Current rotation angle (in degrees, updated per frame).
  */
 float rotDeg = 0.0f;
 
-/**
- * Vertex shader SPIR-V.
- * \code
- *	// glslc -Os -mfmt=num -o - -c in.vert
- *	#version 450
- *	layout(set = 0, binding = 0) uniform Rotation {
- *		float uRot;
- *	};
- *	layout(location = 0) in  vec2 aPos;
- *	layout(location = 1) in  vec3 aCol;
- *	layout(location = 0) out vec3 vCol;
- *	void main() {
- *		float cosA = cos(radians(uRot));
- *		float sinA = sin(radians(uRot));
- *		mat3 rot = mat3(cosA, sinA, 0.0,
- *					   -sinA, cosA, 0.0,
- *						0.0,  0.0,  1.0);
- *		gl_Position = vec4(rot * vec3(aPos, 1.0), 1.0);
- *		vCol = aCol;
- *	}
- * \endcode
- */
-static uint32_t const triangle_vert_spirv[] = {
-	0x07230203, 0x00010000, 0x000d0008, 0x00000043, 0x00000000, 0x00020011, 0x00000001, 0x0006000b,
-	0x00000001, 0x4c534c47, 0x6474732e, 0x3035342e, 0x00000000, 0x0003000e, 0x00000000, 0x00000001,
-	0x0009000f, 0x00000000, 0x00000004, 0x6e69616d, 0x00000000, 0x0000002d, 0x00000031, 0x0000003e,
-	0x00000040, 0x00050048, 0x00000009, 0x00000000, 0x00000023, 0x00000000, 0x00030047, 0x00000009,
-	0x00000002, 0x00040047, 0x0000000b, 0x00000022, 0x00000000, 0x00040047, 0x0000000b, 0x00000021,
-	0x00000000, 0x00050048, 0x0000002b, 0x00000000, 0x0000000b, 0x00000000, 0x00050048, 0x0000002b,
-	0x00000001, 0x0000000b, 0x00000001, 0x00050048, 0x0000002b, 0x00000002, 0x0000000b, 0x00000003,
-	0x00050048, 0x0000002b, 0x00000003, 0x0000000b, 0x00000004, 0x00030047, 0x0000002b, 0x00000002,
-	0x00040047, 0x00000031, 0x0000001e, 0x00000000, 0x00040047, 0x0000003e, 0x0000001e, 0x00000000,
-	0x00040047, 0x00000040, 0x0000001e, 0x00000001, 0x00020013, 0x00000002, 0x00030021, 0x00000003,
-	0x00000002, 0x00030016, 0x00000006, 0x00000020, 0x0003001e, 0x00000009, 0x00000006, 0x00040020,
-	0x0000000a, 0x00000002, 0x00000009, 0x0004003b, 0x0000000a, 0x0000000b, 0x00000002, 0x00040015,
-	0x0000000c, 0x00000020, 0x00000001, 0x0004002b, 0x0000000c, 0x0000000d, 0x00000000, 0x00040020,
-	0x0000000e, 0x00000002, 0x00000006, 0x00040017, 0x00000018, 0x00000006, 0x00000003, 0x00040018,
-	0x00000019, 0x00000018, 0x00000003, 0x0004002b, 0x00000006, 0x0000001e, 0x00000000, 0x0004002b,
-	0x00000006, 0x00000022, 0x3f800000, 0x00040017, 0x00000027, 0x00000006, 0x00000004, 0x00040015,
-	0x00000028, 0x00000020, 0x00000000, 0x0004002b, 0x00000028, 0x00000029, 0x00000001, 0x0004001c,
-	0x0000002a, 0x00000006, 0x00000029, 0x0006001e, 0x0000002b, 0x00000027, 0x00000006, 0x0000002a,
-	0x0000002a, 0x00040020, 0x0000002c, 0x00000003, 0x0000002b, 0x0004003b, 0x0000002c, 0x0000002d,
-	0x00000003, 0x00040017, 0x0000002f, 0x00000006, 0x00000002, 0x00040020, 0x00000030, 0x00000001,
-	0x0000002f, 0x0004003b, 0x00000030, 0x00000031, 0x00000001, 0x00040020, 0x0000003b, 0x00000003,
-	0x00000027, 0x00040020, 0x0000003d, 0x00000003, 0x00000018, 0x0004003b, 0x0000003d, 0x0000003e,
-	0x00000003, 0x00040020, 0x0000003f, 0x00000001, 0x00000018, 0x0004003b, 0x0000003f, 0x00000040,
-	0x00000001, 0x0006002c, 0x00000018, 0x00000042, 0x0000001e, 0x0000001e, 0x00000022, 0x00050036,
-	0x00000002, 0x00000004, 0x00000000, 0x00000003, 0x000200f8, 0x00000005, 0x00050041, 0x0000000e,
-	0x0000000f, 0x0000000b, 0x0000000d, 0x0004003d, 0x00000006, 0x00000010, 0x0000000f, 0x0006000c,
-	0x00000006, 0x00000011, 0x00000001, 0x0000000b, 0x00000010, 0x0006000c, 0x00000006, 0x00000012,
-	0x00000001, 0x0000000e, 0x00000011, 0x0006000c, 0x00000006, 0x00000017, 0x00000001, 0x0000000d,
-	0x00000011, 0x0004007f, 0x00000006, 0x00000020, 0x00000017, 0x00060050, 0x00000018, 0x00000023,
-	0x00000012, 0x00000017, 0x0000001e, 0x00060050, 0x00000018, 0x00000024, 0x00000020, 0x00000012,
-	0x0000001e, 0x00060050, 0x00000019, 0x00000026, 0x00000023, 0x00000024, 0x00000042, 0x0004003d,
-	0x0000002f, 0x00000032, 0x00000031, 0x00050051, 0x00000006, 0x00000033, 0x00000032, 0x00000000,
-	0x00050051, 0x00000006, 0x00000034, 0x00000032, 0x00000001, 0x00060050, 0x00000018, 0x00000035,
-	0x00000033, 0x00000034, 0x00000022, 0x00050091, 0x00000018, 0x00000036, 0x00000026, 0x00000035,
-	0x00050051, 0x00000006, 0x00000037, 0x00000036, 0x00000000, 0x00050051, 0x00000006, 0x00000038,
-	0x00000036, 0x00000001, 0x00050051, 0x00000006, 0x00000039, 0x00000036, 0x00000002, 0x00070050,
-	0x00000027, 0x0000003a, 0x00000037, 0x00000038, 0x00000039, 0x00000022, 0x00050041, 0x0000003b,
-	0x0000003c, 0x0000002d, 0x0000000d, 0x0003003e, 0x0000003c, 0x0000003a, 0x0004003d, 0x00000018,
-	0x00000041, 0x00000040, 0x0003003e, 0x0000003e, 0x00000041, 0x000100fd, 0x00010038
-};
+struct Time {
+	double currentTime, deltaTime = 0.0f;
+}timeStamp;
+
+struct MVP {
+	mat4 model[MAX_NUM_INSTANCES];
+	mat4 view;
+	mat4 projection;
+} view_mtr;
 
 /**
  * WGSL equivalent of \c triangle_vert_spirv.
  */
 static char const triangle_vert_wgsl[] = R"(
 	struct VertexIn {
-		@location(0) aPos : vec2<f32>;
-		@location(1) aCol : vec3<f32>;
+		@location(0) aPos : vec3<f32>,
+		@location(1) aCol : vec3<f32>
 	};
 	struct VertexOut {
-		@location(0) vCol : vec3<f32>;
-		@builtin(position) Position : vec4<f32>;
+		@location(0) vCol : vec3<f32>,
+		@builtin(position) Position : vec4<f32>
 	};
 	struct Rotation {
-		@location(0) degs : f32;
+		@location(0) degs : f32
 	};
+    struct MVP {
+		model: array<mat4x4<f32>, 1000>,
+		view: mat4x4<f32>,
+		projection: mat4x4<f32>
+	};	
 	@group(0) @binding(0) var<uniform> uRot : Rotation;
+    @group(0) @binding(1) var<uniform> uMVP : MVP;
 	@stage(vertex)
-	fn main(input : VertexIn) -> VertexOut {
+	fn main
+	(
+	input : VertexIn,
+	@builtin(instance_index) instanceIdx : u32
+	) -> VertexOut {
 		var rads : f32 = radians(uRot.degs);
 		var cosA : f32 = cos(rads);
 		var sinA : f32 = sin(rads);
@@ -107,40 +90,19 @@ static char const triangle_vert_wgsl[] = R"(
 			vec3<f32>(-sinA, cosA, 0.0),
 			vec3<f32>( 0.0,  0.0,  1.0));
 		var output : VertexOut;
-		output.Position = vec4<f32>(rot * vec3<f32>(input.aPos, 1.0), 1.0);
+
+		// Rotate 1번째 방법 - Rotating된 Model을 Shader에 던져준다.
+		var pos = uMVP.projection * uMVP.view * uMVP.model[instanceIdx] * vec4<f32>(input.aPos, 1.0); 	
+		output.Position = pos;
+
+		// Rotate 2번째 방법 - Shader에서 Ratate된 Model Matrix를 계산한다.
+		//var model = vec4<f32>(rot * vec3<f32>(input.aPos), 1.0);
+		//output.Position = uMVP.projection * uMVP.view * model;
+		
 		output.vCol = input.aCol;
 		return output;
 	}
 )";
-
-/**
- * Fragment shader SPIR-V.
- * \code
- *	// glslc -Os -mfmt=num -o - -c in.frag
- *	#version 450
- *	layout(location = 0) in  vec3 vCol;
- *	layout(location = 0) out vec4 fragColor;
- *	void main() {
- *		fragColor = vec4(vCol, 1.0);
- *	}
- * \endcode
- */
-static uint32_t const triangle_frag_spirv[] = {
-	0x07230203, 0x00010000, 0x000d0007, 0x00000013, 0x00000000, 0x00020011, 0x00000001, 0x0006000b,
-	0x00000001, 0x4c534c47, 0x6474732e, 0x3035342e, 0x00000000, 0x0003000e, 0x00000000, 0x00000001,
-	0x0007000f, 0x00000004, 0x00000004, 0x6e69616d, 0x00000000, 0x00000009, 0x0000000c, 0x00030010,
-	0x00000004, 0x00000007, 0x00040047, 0x00000009, 0x0000001e, 0x00000000, 0x00040047, 0x0000000c,
-	0x0000001e, 0x00000000, 0x00020013, 0x00000002, 0x00030021, 0x00000003, 0x00000002, 0x00030016,
-	0x00000006, 0x00000020, 0x00040017, 0x00000007, 0x00000006, 0x00000004, 0x00040020, 0x00000008,
-	0x00000003, 0x00000007, 0x0004003b, 0x00000008, 0x00000009, 0x00000003, 0x00040017, 0x0000000a,
-	0x00000006, 0x00000003, 0x00040020, 0x0000000b, 0x00000001, 0x0000000a, 0x0004003b, 0x0000000b,
-	0x0000000c, 0x00000001, 0x0004002b, 0x00000006, 0x0000000e, 0x3f800000, 0x00050036, 0x00000002,
-	0x00000004, 0x00000000, 0x00000003, 0x000200f8, 0x00000005, 0x0004003d, 0x0000000a, 0x0000000d,
-	0x0000000c, 0x00050051, 0x00000006, 0x0000000f, 0x0000000d, 0x00000000, 0x00050051, 0x00000006,
-	0x00000010, 0x0000000d, 0x00000001, 0x00050051, 0x00000006, 0x00000011, 0x0000000d, 0x00000002,
-	0x00070050, 0x00000007, 0x00000012, 0x0000000f, 0x00000010, 0x00000011, 0x0000000e, 0x0003003e,
-	0x00000009, 0x00000012, 0x000100fd, 0x00010038
-};
 
 /**
  * WGSL equivalent of \c triangle_frag_spirv.
@@ -196,10 +158,52 @@ static WGPUShaderModule createShader(const char* const code, const char* label =
 static WGPUBuffer createBuffer(const void* data, size_t size, WGPUBufferUsage usage) {
 	WGPUBufferDescriptor desc = {};
 	desc.usage = WGPUBufferUsage_CopyDst | usage;
-	desc.size  = size;
+	desc.size = size;
 	WGPUBuffer buffer = wgpuDeviceCreateBuffer(device, &desc);
 	wgpuQueueWriteBuffer(queue, buffer, 0, data, size);
 	return buffer;
+}
+
+static void prepare_model_matrices()
+{
+	// Initialize the matrix data for every instance.
+	uint32_t cubeIndex = 0;
+	for (uint32_t x = 0; x < x_count; x++) {
+		for (uint32_t y = 0; y < y_count; y++) {
+			for (uint32_t z = 0; z < z_count; z++) {
+				view_mtr.model[cubeIndex] = mat4(1.0f);
+				view_mtr.model[cubeIndex] = translate(view_mtr.model[cubeIndex], vec3(
+					(x * 4.f), // x
+					(y * 4.f), // y
+					(z * 4.f))                               // z
+				);
+				++cubeIndex;
+			}
+		}
+	}
+}
+
+static void setProjectionAndView()
+{
+	view_mtr.projection = perspective(glm::radians(40.0f), (float)WINDOW_WIDTH / (float)WINDOW_HEIGHT, 0.1f, 100.0f);
+	view_mtr.view = lookAt(vec3(70.0f, 50.0f, 70.f), vec3(0.f, 0.f, 0.0f), vec3(0.f, 1.f, 0.f));
+}
+
+static void setOffsetsForInstancing()
+{
+	// Rotate 1번째 방법
+	double now = clock() / 1000.f;
+	auto cubeIndex = 0;
+	for (auto x = 0; x < x_count; x++) {
+		for (auto y = 0; y < y_count; y++) {
+			for (auto z = 0; z < z_count; z++) {
+				const float sin_now = sin(((float)x + 2.0f) * now);
+				const float cos_now = cos(((float)y + 2.0f) * now);
+				view_mtr.model[cubeIndex] = rotate(view_mtr.model[cubeIndex], 0.1f, vec3(sin_now, cos_now, 0.0f));
+				cubeIndex++;
+			}
+		}
+	}
 }
 
 /**
@@ -210,23 +214,25 @@ static void createPipelineAndBuffers() {
 	// NOTE: these are now the WGSL shaders (tested with Dawn and Chrome Canary)
 	WGPUShaderModule vertMod = createShader(triangle_vert_wgsl);
 	WGPUShaderModule fragMod = createShader(triangle_frag_wgsl);
-	
-	// keep the old unused SPIR-V shaders around for a while...
-	(void) triangle_vert_spirv;
-	(void) triangle_frag_spirv;
 
-	WGPUBufferBindingLayout buf = {};
-	buf.type = WGPUBufferBindingType_Uniform;
+	WGPUBufferBindingLayout buf[2] = {};
+	buf[0].type = WGPUBufferBindingType_Uniform;
+
+	buf[1].type = WGPUBufferBindingType_Uniform;
 
 	// bind group layout (used by both the pipeline layout and uniform bind group, released at the end of this function)
-	WGPUBindGroupLayoutEntry bglEntry = {};
-	bglEntry.binding = 0;
-	bglEntry.visibility = WGPUShaderStage_Vertex;
-	bglEntry.buffer = buf;
+	WGPUBindGroupLayoutEntry bglEntry[2] = {};
+	bglEntry[0].binding = 0;
+	bglEntry[0].visibility = WGPUShaderStage_Vertex;
+	bglEntry[0].buffer = buf[0];
+
+	bglEntry[1].binding = 1;
+	bglEntry[1].visibility = WGPUShaderStage_Vertex;
+	bglEntry[1].buffer = buf[1];
 
 	WGPUBindGroupLayoutDescriptor bglDesc = {};
-	bglDesc.entryCount = 1;
-	bglDesc.entries = &bglEntry;
+	bglDesc.entryCount = 2;
+	bglDesc.entries = bglEntry;
 	WGPUBindGroupLayout bindGroupLayout = wgpuDeviceCreateBindGroupLayout(device, &bglDesc);
 
 	// pipeline layout (used by the render pipeline, released after its creation)
@@ -237,14 +243,14 @@ static void createPipelineAndBuffers() {
 
 	// describe buffer layouts
 	WGPUVertexAttribute vertAttrs[2] = {};
-	vertAttrs[0].format = WGPUVertexFormat_Float32x2;
+	vertAttrs[0].format = WGPUVertexFormat_Float32x3;
 	vertAttrs[0].offset = 0;
 	vertAttrs[0].shaderLocation = 0;
 	vertAttrs[1].format = WGPUVertexFormat_Float32x3;
-	vertAttrs[1].offset = 2 * sizeof(float);
+	vertAttrs[1].offset = 3 * sizeof(float);
 	vertAttrs[1].shaderLocation = 1;
 	WGPUVertexBufferLayout vertexBufferLayout = {};
-	vertexBufferLayout.arrayStride = 5 * sizeof(float);
+	vertexBufferLayout.arrayStride = 6 * sizeof(float);
 	vertexBufferLayout.attributeCount = 2;
 	vertexBufferLayout.attributes = vertAttrs;
 
@@ -259,7 +265,8 @@ static void createPipelineAndBuffers() {
 
 	WGPUColorTargetState colorTarget = {};
 	colorTarget.format = webgpu::getSwapChainFormat(device);
-	colorTarget.blend = &blend;
+	//colorTarget.blend = &blend;
+	colorTarget.blend = nullptr;
 	colorTarget.writeMask = WGPUColorWriteMask_All;
 
 	WGPUFragmentState fragment = {};
@@ -268,13 +275,32 @@ static void createPipelineAndBuffers() {
 	fragment.targetCount = 1;
 	fragment.targets = &colorTarget;
 
+	WGPUStencilFaceState stencil_state_face_descriptor = {};
+	stencil_state_face_descriptor.compare = WGPUCompareFunction_Always;
+	stencil_state_face_descriptor.failOp = WGPUStencilOperation_Keep;
+	stencil_state_face_descriptor.depthFailOp = WGPUStencilOperation_Keep;
+	stencil_state_face_descriptor.passOp = WGPUStencilOperation_Keep;
+
+
+	WGPUDepthStencilState depth_stencil_state = {};
+	depth_stencil_state.format = WGPUTextureFormat_Depth24Plus;
+	depth_stencil_state.stencilFront = stencil_state_face_descriptor;
+	depth_stencil_state.stencilBack = stencil_state_face_descriptor;
+	depth_stencil_state.depthWriteEnabled = true;
+	depth_stencil_state.depthCompare = WGPUCompareFunction_Less;
+	depth_stencil_state.stencilReadMask = 0xFFFFFFFF;
+	depth_stencil_state.stencilWriteMask = 0xFFFFFFFF;
+	depth_stencil_state.depthBias = 0;
+	depth_stencil_state.depthBiasSlopeScale = 0.0f;
+	depth_stencil_state.depthBiasClamp = 0.0f;
+
 	WGPURenderPipelineDescriptor desc = {};
 	desc.fragment = &fragment;
 
 	// Other state
 	desc.layout = pipelineLayout;
-	desc.depthStencil = nullptr;
 
+	desc.depthStencil = &depth_stencil_state;
 	desc.vertex.module = vertMod;
 	desc.vertex.entryPoint = "main";
 	desc.vertex.bufferCount = 1;//0;
@@ -297,38 +323,76 @@ static void createPipelineAndBuffers() {
 	wgpuShaderModuleRelease(fragMod);
 	wgpuShaderModuleRelease(vertMod);
 
-	// create the buffers (x, y, r, g, b)
+	// create the buffers (x, y, z,  r, g, b)
 	float const vertData[] = {
-		-0.8f, -0.8f, 0.0f, 0.0f, 1.0f, // BL
-		 0.8f, -0.8f, 0.0f, 1.0f, 0.0f, // BR
-		-0.0f,  0.8f, 1.0f, 0.0f, 0.0f, // top
+		// Front
+		-0.8f, -0.8f, 0.8f, 1.0f, 1.0f, 0.0f, // BL
+		 0.8f, -0.8f, 0.8f, 0.7f, 0.7f, 0.0f, // BR
+		-0.8f,  0.8f, 0.8f, 0.7f, 0.7f, 0.0f, // TL
+		 0.8f,  0.8f, 0.8f, 0.5f, 0.5f, 0.0f, // TR
+		 // Rear
+		-0.8f, -0.8f, -0.8f, 0.0f, 0.0f, 1.0f, // BL
+		 0.8f, -0.8f, -0.8f, 0.0f, 0.0f, 0.7f, // BR
+		-0.8f,  0.8f, -0.8f, 0.0f, 0.0f, 0.7f, // TL
+		 0.8f,  0.8f, -0.8f, 0.0f, 0.0f, 0.5f, // TR
 	};
 	uint16_t const indxData[] = {
 		0, 1, 2,
-		0 // padding (better way of doing this?)
+		2, 1, 3,
+
+		4, 5, 6,
+		6, 5, 7,
+
+		1, 5, 3,
+		3, 5, 7,
+
+		0, 4, 2,
+		2, 4, 6,
+
+		2, 3, 6,
+		6, 3, 7,
+
+		0, 1, 4,
+		4, 1, 5
 	};
+
+	cube.indexCount = sizeof(indxData) / sizeof(uint16_t);
+	cube.triangleCount = cube.indexCount / 3;
+
 	vertBuf = createBuffer(vertData, sizeof(vertData), WGPUBufferUsage_Vertex);
 	indxBuf = createBuffer(indxData, sizeof(indxData), WGPUBufferUsage_Index);
 
 	// create the uniform bind group (note 'rotDeg' is copied here, not bound in any way)
 	uRotBuf = createBuffer(&rotDeg, sizeof(rotDeg), WGPUBufferUsage_Uniform);
 
-	WGPUBindGroupEntry bgEntry = {};
-	bgEntry.binding = 0;
-	bgEntry.buffer = uRotBuf;
-	bgEntry.offset = 0;
-	bgEntry.size = sizeof(rotDeg);
+	prepare_model_matrices();
+
+	setProjectionAndView();
+
+	uMVPBuf = createBuffer(&view_mtr, sizeof(view_mtr) + 256, WGPUBufferUsage_Uniform);
+
+	WGPUBindGroupEntry bgEntry[2] = {};
+	bgEntry[0].binding = 0;
+	bgEntry[0].buffer = uRotBuf;
+	bgEntry[0].offset = 0;
+	bgEntry[0].size = sizeof(rotDeg);
+
+	bgEntry[1].binding = 1;
+	bgEntry[1].buffer = uMVPBuf;
+	bgEntry[1].offset = 0;
+	bgEntry[1].size = sizeof(view_mtr);
 
 	WGPUBindGroupDescriptor bgDesc = {};
 	bgDesc.layout = bindGroupLayout;
-	bgDesc.entryCount = 1;
-	bgDesc.entries = &bgEntry;
+	bgDesc.entryCount = 2;
+	bgDesc.entries = bgEntry;
 
 	bindGroup = wgpuDeviceCreateBindGroup(device, &bgDesc);
 
 	// last bit of clean-up
 	wgpuBindGroupLayoutRelease(bindGroupLayout);
 }
+
 
 /**
  * Draws using the above pipeline and buffers.
@@ -337,8 +401,8 @@ static bool redraw() {
 	WGPUTextureView backBufView = wgpuSwapChainGetCurrentTextureView(swapchain);			// create textureView
 
 	WGPURenderPassColorAttachment colorDesc = {};
-	colorDesc.view    = backBufView;
-	colorDesc.loadOp  = WGPULoadOp_Clear;
+	colorDesc.view = backBufView;
+	colorDesc.loadOp = WGPULoadOp_Clear;
 	colorDesc.storeOp = WGPUStoreOp_Store;
 #ifdef __EMSCRIPTEN__
 	// Dawn has both clearValue/clearColor but only Color works; Emscripten only has Value
@@ -353,23 +417,72 @@ static bool redraw() {
 	colorDesc.clearColor.a = 1.0f;
 #endif
 
+	WGPUTextureFormat format = {};
+	format = WGPUTextureFormat_Depth24Plus;
+
+	WGPUExtent3D size = {};
+	size.width = 800;
+	size.height = 450;
+	size.depthOrArrayLayers = 1;
+
+	WGPUTextureDescriptor depth_texture_desc = {};
+	depth_texture_desc.usage = WGPUTextureUsage_RenderAttachment;
+	depth_texture_desc.format = format;
+	depth_texture_desc.dimension = WGPUTextureDimension_2D;
+	depth_texture_desc.mipLevelCount = 1;
+	depth_texture_desc.sampleCount = 1;
+	depth_texture_desc.size = size;
+
+	WGPUTexture depth_stencil_texture = wgpuDeviceCreateTexture(device, &depth_texture_desc);
+
+	WGPUTextureViewDescriptor depth_texture_view_dec = {};
+	depth_texture_view_dec.format = depth_texture_desc.format;
+	depth_texture_view_dec.dimension = WGPUTextureViewDimension_2D;
+	depth_texture_view_dec.baseMipLevel = 0;
+	depth_texture_view_dec.mipLevelCount = 1;
+	depth_texture_view_dec.baseArrayLayer = 0;
+	depth_texture_view_dec.arrayLayerCount = 1;
+	depth_texture_view_dec.aspect = WGPUTextureAspect_All;
+
+	WGPUTextureView depth_stencil_texture_view = wgpuTextureCreateView(depth_stencil_texture, &depth_texture_view_dec);
+
+	WGPURenderPassDepthStencilAttachment depthDesc = {};
+	depthDesc.view = depth_stencil_texture_view;
+	depthDesc.depthLoadOp = WGPULoadOp_Clear;
+	depthDesc.depthStoreOp = WGPUStoreOp_Store;
+	depthDesc.depthClearValue = 1.0f;
+	depthDesc.clearDepth = 1.0f;
+	depthDesc.clearStencil = 0;
+	//depthDesc.stencilLoadOp = WGPULoadOp_Clear;
+	//depthDesc.stencilStoreOp = WGPUStoreOp_Store;
+
+
+	// set up render pass
 	WGPURenderPassDescriptor renderPass = {};
 	renderPass.colorAttachmentCount = 1;
 	renderPass.colorAttachments = &colorDesc;
-
+	renderPass.depthStencilAttachment = &depthDesc;
 	WGPUCommandEncoder encoder = wgpuDeviceCreateCommandEncoder(device, nullptr);			// create encoder
 	WGPURenderPassEncoder pass = wgpuCommandEncoderBeginRenderPass(encoder, &renderPass);	// create pass
 
-	// update the rotation
-	rotDeg += 0.1f;
+	// mvp update
+	//setProjectionAndView();
+
+	setOffsetsForInstancing();
+	wgpuQueueWriteBuffer(queue, uMVPBuf, 0, &view_mtr, sizeof(view_mtr));
+
+
+	// Rotate 2번째 방법
+	rotDeg += 0.2f;
 	wgpuQueueWriteBuffer(queue, uRotBuf, 0, &rotDeg, sizeof(rotDeg));
+
 
 	// draw the triangle (comment these five lines to simply clear the screen)
 	wgpuRenderPassEncoderSetPipeline(pass, pipeline);
 	wgpuRenderPassEncoderSetBindGroup(pass, 0, bindGroup, 0, 0);
 	wgpuRenderPassEncoderSetVertexBuffer(pass, 0, vertBuf, 0, WGPU_WHOLE_SIZE);
 	wgpuRenderPassEncoderSetIndexBuffer(pass, indxBuf, WGPUIndexFormat_Uint16, 0, WGPU_WHOLE_SIZE);
-	wgpuRenderPassEncoderDrawIndexed(pass, 3, 1, 0, 0, 0);
+	wgpuRenderPassEncoderDrawIndexed(pass, cube.indexCount, num_instances, 0, 0, 0);
 
 	wgpuRenderPassEncoderEnd(pass);
 	wgpuRenderPassEncoderRelease(pass);														// release pass
@@ -390,16 +503,17 @@ static bool redraw() {
 }
 
 extern "C" int __main__(int /*argc*/, char* /*argv*/[]) {
-	if (window::Handle wHnd = window::create()) {
+	if (window::Handle wHnd = window::create(WINDOW_WIDTH, WINDOW_HEIGHT)) {
 		if ((device = webgpu::create(wHnd))) {
 			queue = wgpuDeviceGetQueue(device);
+
 			swapchain = webgpu::createSwapChain(device);
 			createPipelineAndBuffers();
 
 			window::show(wHnd);
 			window::loop(wHnd, redraw);
 
-		#ifndef __EMSCRIPTEN__
+#ifndef __EMSCRIPTEN__
 			wgpuBindGroupRelease(bindGroup);
 			wgpuBufferRelease(uRotBuf);
 			wgpuBufferRelease(indxBuf);
@@ -408,11 +522,11 @@ extern "C" int __main__(int /*argc*/, char* /*argv*/[]) {
 			wgpuSwapChainRelease(swapchain);
 			wgpuQueueRelease(queue);
 			wgpuDeviceRelease(device);
-		#endif
+#endif
 		}
-	#ifndef __EMSCRIPTEN__
+#ifndef __EMSCRIPTEN__
 		window::destroy(wHnd);
-	#endif
+#endif
 	}
 	return 0;
 }
