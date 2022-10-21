@@ -31,8 +31,6 @@ static const uint32_t x_count = 10;
 static const uint32_t y_count = 10;
 static const uint32_t z_count = 10;
 static const uint32_t num_instances = x_count * y_count * z_count;
-static const uint32_t matrix_float_count = 16; // 4x4 matrix
-static const uint32_t matrix_size = 4 * matrix_float_count;
 
 struct Cube {
 	uint16_t triangleCount = 0;
