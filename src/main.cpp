@@ -417,7 +417,6 @@ static bool redraw() {
 
 	WGPUTextureFormat format = {};
 	format = WGPUTextureFormat_Depth24Plus;
-
 	WGPUExtent3D size = {};
 	size.width = 800;
 	size.height = 450;
@@ -454,7 +453,6 @@ static bool redraw() {
 	//depthDesc.stencilLoadOp = WGPULoadOp_Clear;
 	//depthDesc.stencilStoreOp = WGPUStoreOp_Store;
 
-
 	// set up render pass
 	WGPURenderPassDescriptor renderPass = {};
 	renderPass.colorAttachmentCount = 1;
@@ -469,10 +467,10 @@ static bool redraw() {
 	setOffsetsForInstancing();
 	wgpuQueueWriteBuffer(queue, uMVPBuf, 0, &view_mtr, sizeof(view_mtr));
 
-
 	// Rotate 2번째 방법
 	rotDeg += 0.2f;
 	wgpuQueueWriteBuffer(queue, uRotBuf, 0, &rotDeg, sizeof(rotDeg));
+	wgpuQueueWriteBuffer(queue, uMVPBuf, 0, &view_mtr, sizeof(view_mtr));
 
 
 	// draw the triangle (comment these five lines to simply clear the screen)
