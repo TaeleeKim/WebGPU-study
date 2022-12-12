@@ -22,7 +22,7 @@
     <VCProjectVersion>16.0</VCProjectVersion>
     <ProjectGuid>{8CB18772-844E-4743-B821-5E5FAF086321}</ProjectGuid>
     <RootNamespace>HelloWebGPU</RootNamespace>
-    <WindowsTargetPlatformVersion>10.0.22621.0</WindowsTargetPlatformVersion>
+    <WindowsTargetPlatformVersion>10.0.17134.0</WindowsTargetPlatformVersion>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
@@ -146,6 +146,7 @@
       <RuntimeTypeInfo>false</RuntimeTypeInfo>
       <ExceptionHandling>false</ExceptionHandling>
       <LanguageStandard>stdcpp17</LanguageStandard>
+      <Optimization>Disabled</Optimization>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -174,6 +175,8 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="ObjFunction.cpp" />
+    <ClCompile Include="src\ObjManager.cpp" />
     <ClCompile Include="src\main.cpp">
       <AdditionalIncludeDirectories Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">C:\Study\0822\webGPU2\hello-webgpu\inc\glm;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
@@ -182,8 +185,12 @@
     <ClCompile Include="src\win\window.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="inc\ObjFunction.h" />
+    <ClInclude Include="inc\ObjStruct.h" />
+    <ClInclude Include="inc\ObjManager.h" />
     <ClInclude Include="inc\webgpu.h" />
     <ClInclude Include="inc\window.h" />
+    <ClInclude Include="inc\ObjLoader.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

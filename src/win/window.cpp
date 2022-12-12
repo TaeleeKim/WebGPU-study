@@ -13,6 +13,7 @@
 #pragma comment(lib, "shcore.lib")
 #endif
 
+#include "ObjManager.h"
 //****************************************************************************/
 
 /*
@@ -302,6 +303,55 @@ static UINT getWindowDpi(HWND const hWnd = NULL) {
  */
 LRESULT CALLBACK windowEvents(HWND const hWnd, UINT const uMsg, WPARAM const wParam, LPARAM const lParam) {
 	switch (uMsg) {
+	case WM_CREATE:
+	{
+		HMENU hMenu = CreateMenu();
+		HMENU hSubMenu = CreatePopupMenu();
+		AppendMenu(hSubMenu, MF_STRING, ID_IMPORT_OBJ, L"Import OBJ");
+		AppendMenu(hMenu, MF_STRING | MF_POPUP, (UINT)hSubMenu, L"File");
+		SetMenu(hWnd, hMenu);
+		break;
+	}
+	case WM_COMMAND:
+	{
+		switch (LOWORD(wParam))
+		{
+		case ID_IMPORT_OBJ:
+		{
+			OPENFILENAME OFN;
+			TCHAR filePathName[100] = L"";
+			TCHAR lpstrFile[100] = L"";
+			static TCHAR filter[] = L"OBJ file\0*.obj";
+
+			memset(&OFN, 0, sizeof(OPENFILENAME));
+			OFN.lStructSize = sizeof(OPENFILENAME);
+			OFN.hwndOwner = hWnd;
+			OFN.lpstrFilter = filter;
+			OFN.lpstrFile = lpstrFile;
+			OFN.nMaxFile = 100;
+			OFN.lpstrInitialDir = L".";
+
+			if (GetOpenFileName(&OFN) != 0) {
+				wsprintf(filePathName, L"%s 파일을 열겠습니까?", OFN.lpstrFile);
+				MessageBox(hWnd, filePathName, L"열기 선택", MB_OK);
+			}
+
+			std::wstring wstr = OFN.lpstrFile;
+			std::string tempStr(wstr.begin(), wstr.end());
+
+			if (tempStr.empty() == false)
+			{
+				auto objManager = ObjManager::GetInstance();
+				objManager->LoadFile(tempStr);
+			}
+
+			break;
+		}
+		default:
+			break;
+		}
+		break;
+	}
 	case WM_SIZE:
 		/*
 		 * See note about the swap in surfaceResize and WM_WINDOWPOSCHANGED,

@@ -16,6 +16,9 @@
     <Filter Include="src\win">
       <UniqueIdentifier>{e0c65cfd-096d-4ff9-a0a4-0ab00d27a5a3}</UniqueIdentifier>
     </Filter>
+    <Filter Include="ObjLoader">
+      <UniqueIdentifier>{c03d86b3-1422-4576-969e-dedc70b0d3d6}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\main.cpp">
@@ -30,6 +33,12 @@
     <ClCompile Include="src\win\glue.cpp">
       <Filter>src\win</Filter>
     </ClCompile>
+    <ClCompile Include="src\ObjManager.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="ObjFunction.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="inc\webgpu.h">
@@ -37,6 +46,18 @@
     </ClInclude>
     <ClInclude Include="inc\window.h">
       <Filter>inc</Filter>
+    </ClInclude>
+    <ClInclude Include="inc\ObjLoader.h">
+      <Filter>ObjLoader</Filter>
+    </ClInclude>
+    <ClInclude Include="inc\ObjManager.h">
+      <Filter>inc</Filter>
+    </ClInclude>
+    <ClInclude Include="inc\ObjStruct.h">
+      <Filter>ObjLoader</Filter>
+    </ClInclude>
+    <ClInclude Include="inc\ObjFunction.h">
+      <Filter>ObjLoader</Filter>
     </ClInclude>
   </ItemGroup>
 </Project>

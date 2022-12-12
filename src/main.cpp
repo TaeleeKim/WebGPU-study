@@ -7,6 +7,8 @@
 #include <glm/gtc/constants.hpp>
 #include <glm/gtx/transform.hpp>
 #include <time.h>
+#include "ObjManager.h"
+
 using namespace glm;
 
 WGPUDevice device;
@@ -202,6 +204,41 @@ static void setOffsetsForInstancing()
 			}
 		}
 	}
+}
+
+static void createModelBuffers()
+{
+	auto objManager = ObjManager::GetInstance();
+
+	auto objLoader = objManager->GetLoader();
+
+	if (objLoader->LoadedVertices.empty()) return;
+	if (objLoader->LoadedIndices.empty()) return;
+
+	std::vector<float> vVertData;
+	std::vector<uint16_t> vIndxData;
+	double max = 32767;
+	for (int i = 0; i < objLoader->LoadedVertices.size(); i++)
+	{
+		auto vert = objLoader->LoadedVertices[i];
+		vVertData.push_back(vert.Position.X);
+		vVertData.push_back(vert.Position.Y);
+		vVertData.push_back(vert.Position.Z);
+		//vVertData.push_back(rand() / max);
+		//vVertData.push_back(rand() / max);
+		//vVertData.push_back(rand() / max);
+		vVertData.push_back(0.9);
+		vVertData.push_back(0.5);
+		vVertData.push_back(0.5);
+	}
+
+	for (int i = 0; i < objLoader->LoadedIndices.size(); i++)
+	{
+		vIndxData.push_back(objLoader->LoadedIndices[i]);
+	}
+
+	vertBuf = createBuffer(&vVertData[0], sizeof(float)*vVertData.size(), WGPUBufferUsage_Vertex);
+	indxBuf = createBuffer(&vIndxData[0], sizeof(uint16_t)*vIndxData.size(), WGPUBufferUsage_Index);
 }
 
 /**
@@ -472,6 +509,7 @@ static bool redraw() {
 	wgpuQueueWriteBuffer(queue, uRotBuf, 0, &rotDeg, sizeof(rotDeg));
 	wgpuQueueWriteBuffer(queue, uMVPBuf, 0, &view_mtr, sizeof(view_mtr));
 
+	createModelBuffers();
 
 	// draw the triangle (comment these five lines to simply clear the screen)
 	wgpuRenderPassEncoderSetPipeline(pass, pipeline);
